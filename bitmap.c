@@ -26,6 +26,8 @@
 #include "stdio.h"
 #include "string.h"
 #include "bitmap.h"
+#include <stdint.h>
+#include <stdlib.h>
 
 void bmp_clear(const bitmap_t *bitmap, uint8_t color)
 {
@@ -60,7 +62,7 @@ static bitmap_t *_make_bitmap(uint8_t *data_addr, bool hw, int width,
    if (false == bitmap->hardware)
    {
        bitmap->pitch = (bitmap->pitch + 3) & ~3;
-       bitmap->line[0] = (uint8_t *) (((long long)bitmap->data + overdraw + 3) & ~3);
+       bitmap->line[0] = (uint8_t *) (((uintptr_t)bitmap->data + overdraw + 3U) & ~(uintptr_t)3U);
    }
    else
    { 

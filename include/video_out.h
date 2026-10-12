@@ -44,8 +44,9 @@ int _pal_ = 0;
 #include "soc/io_mux_reg.h"
 #include "rom/gpio.h"
 #include "rom/lldesc.h"
-#include "driver/periph_ctrl.h"
-#include "driver/dac.h"
+#include "esp_private/periph_ctrl.h"
+#include "driver/dac_oneshot.h"
+#include "hal/dac_ll.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -63,6 +64,7 @@ lldesc_t _dma_desc[4] = {0};
 intr_handle_t _isr_handle;
 EventGroupHandle_t g_video_event_group = NULL;
 bool g_video_initialized = false;
+dac_oneshot_handle_t g_video_dac = NULL;
 extern "C"
 void IRAM_ATTR video_isr(volatile void* buf);
 
@@ -153,8 +155,15 @@ static esp_err_t start_dma(int line_width,int samples_per_cc, int ch = 1)
     I2S0.clkm_conf.clka_en = 1;                 // Set this bit to enable clk_apll.
     I2S0.fifo_conf.tx_fifo_mod = (ch == 2) ? 0 : 1; // 32-bit dual or 16-bit single channel data
 
-    dac_output_enable(DAC_CHANNEL_1);           // DAC, video on GPIO25
-    dac_i2s_enable();                           // start DAC!
+    /* IDF 6 移除了旧 DAC API：用 oneshot 完成通道申请，再切换到 I2S DMA 数据源。 */
+    dac_oneshot_config_t dac_config = {
+        .chan_id = DAC_CHAN_0,
+    };
+    if (dac_oneshot_new_channel(&dac_config, &g_video_dac) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    dac_oneshot_output_voltage(g_video_dac, 0);
+    dac_ll_digi_enable_dma(true);               // start DAC DMA!
 
     I2S0.conf.tx_start = 1;                     // start DMA!
     I2S0.int_clr.val = 0xFFFFFFFF;
@@ -301,8 +310,11 @@ void video_destroy() {
     I2S0.out_link.start = 0;
 
     //disable i2s DAC
-    dac_i2s_disable();
-    dac_output_disable(DAC_CHANNEL_1);
+    dac_ll_digi_enable_dma(false);
+    if (g_video_dac != NULL) {
+        dac_oneshot_del_channel(g_video_dac);
+        g_video_dac = NULL;
+    }
     
     // free DMA buffers
     for(size_t i=0;i<2;i++) {
